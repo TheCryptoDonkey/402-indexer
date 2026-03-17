@@ -72,6 +72,19 @@ async function main(): Promise<void> {
   // Active probing: seed URLs + discovered URLs
   const probeList = new Set(config.seedUrls)
 
+  // --- Initial scan: populate probe list before first probe ---
+  console.log('[startup] running initial GitHub/npm scan to populate probe list...')
+  try {
+    const githubUrls = await runGitHubScan(config.githubToken)
+    const npmUrls = await runNpmScan()
+    for (const url of [...githubUrls, ...npmUrls]) {
+      probeList.add(url)
+    }
+    console.log(`[startup] probe list populated: ${probeList.size} URLs`)
+  } catch (err) {
+    console.error('[startup] initial scan failed, continuing with seed URLs:', err)
+  }
+
   // --- Channel 1: Active Probing ---
   const stopProbe = scheduleTask('active-prober', async () => {
     console.log(`[active-prober] probing ${probeList.size} URLs...`)
@@ -105,7 +118,7 @@ async function main(): Promise<void> {
     store.save()
   }, config.probeIntervalMs)
 
-  // --- Channel 2: GitHub + npm scanning ---
+  // --- Channel 2: GitHub + npm scanning (periodic refresh) ---
   const stopScan = scheduleTask('github-npm-scan', async () => {
     console.log('[github-npm-scan] scanning...')
     const githubUrls = await runGitHubScan(config.githubToken)
