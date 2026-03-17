@@ -4,7 +4,7 @@ const USER_AGENT = '402-indexer/1.0 (+https://402.pub)'
 export interface RegistryService {
   url: string
   name?: string
-  source: 'satring' | 'awesome-l402' | 'x402-ecosystem'
+  source: 'satring' | 'awesome-l402' | 'x402-ecosystem' | 'awesome-cashu' | 'cashumints'
 }
 
 /** Hosts to ignore when extracting service URLs from markdown/HTML */
@@ -122,6 +122,48 @@ export async function runRegistryScan(): Promise<string[]> {
     console.error('[registry-scanner] x402-ecosystem failed:', err)
   }
 
+  console.log('[registry-scanner] fetching awesome-cashu...')
+  try {
+    const cashu = await fetchAwesomeCashu()
+    for (const svc of cashu) allUrls.add(svc.url)
+    console.log(`[registry-scanner] awesome-cashu: ${cashu.length} URLs`)
+  } catch (err) {
+    console.error('[registry-scanner] awesome-cashu failed:', err)
+  }
+
+  console.log('[registry-scanner] fetching cashumints.space...')
+  try {
+    const mints = await fetchCashuMints()
+    for (const svc of mints) allUrls.add(svc.url)
+    console.log(`[registry-scanner] cashumints: ${mints.length} URLs`)
+  } catch (err) {
+    console.error('[registry-scanner] cashumints failed:', err)
+  }
+
   console.log(`[registry-scanner] total unique URLs: ${allUrls.size}`)
   return [...allUrls]
+}
+
+/** Parse awesome-cashu README for service URLs */
+export async function fetchAwesomeCashu(): Promise<RegistryService[]> {
+  const response = await fetch(
+    'https://raw.githubusercontent.com/cashubtc/awesome-cashu/main/README.md',
+    { headers: { 'User-Agent': USER_AGENT } },
+  )
+  if (!response.ok) return []
+
+  const content = await response.text()
+  return extractServiceUrls(content, 'awesome-cashu')
+}
+
+/** Fetch cashumints.space for mint directory URLs */
+export async function fetchCashuMints(): Promise<RegistryService[]> {
+  const response = await fetch(
+    'https://cashumints.space',
+    { headers: { 'User-Agent': USER_AGENT } },
+  )
+  if (!response.ok) return []
+
+  const html = await response.text()
+  return extractServiceUrls(html, 'cashumints')
 }

@@ -107,6 +107,10 @@ export const DEPENDENCY_MARKERS = [
   'aperture',
   'fewsats',
   'l402-python',
+  '@cashu/cashu-ts',
+  'cashu-js',
+  '@gandlaf21/cashu-js',
+  'xcashu',
 ]
 
 /**

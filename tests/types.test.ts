@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import {
-  type DiscoveredService,
-  type ProbeResult,
-  type HealthEntry,
-  type EventSource,
   isValidEventSource,
   isValidStatus,
 } from '../src/types.js'
