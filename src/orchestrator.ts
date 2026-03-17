@@ -4,6 +4,7 @@ import { probeUrls } from './channels/active-prober.js'
 import { aggregateFromRelays, findSupersededIndexerEvents } from './channels/nostr-aggregator.js'
 import { runGitHubScan } from './channels/github-scanner.js'
 import { runNpmScan } from './channels/npm-scanner.js'
+import { runRegistryScan } from './channels/registry-scanner.js'
 import { parseSuggestionEvent } from './channels/community-listener.js'
 import { StateStore } from './health/state-store.js'
 import { runHealthChecks } from './health/health-checker.js'
@@ -85,6 +86,15 @@ async function main(): Promise<void> {
     console.error('[startup] initial scan failed, continuing with seed URLs:', err)
   }
 
+  console.log('[startup] running registry scan...')
+  try {
+    const registryUrls = await runRegistryScan()
+    for (const url of registryUrls) probeList.add(url)
+    console.log(`[startup] probe list after registry scan: ${probeList.size} URLs`)
+  } catch (err) {
+    console.error('[startup] registry scan failed:', err)
+  }
+
   // --- Channel 1: Active Probing ---
   const stopProbe = scheduleTask('active-prober', async () => {
     console.log(`[active-prober] probing ${probeList.size} URLs...`)
@@ -118,7 +128,7 @@ async function main(): Promise<void> {
     store.save()
   }, config.probeIntervalMs)
 
-  // --- Channel 2: GitHub + npm scanning (periodic refresh) ---
+  // --- Channel 2: GitHub + npm + registry scanning (periodic refresh) ---
   const stopScan = scheduleTask('github-npm-scan', async () => {
     console.log('[github-npm-scan] scanning...')
     const githubUrls = await runGitHubScan(config.githubToken)
@@ -129,6 +139,15 @@ async function main(): Promise<void> {
     }
 
     console.log(`[github-npm-scan] probe list now has ${probeList.size} URLs`)
+
+    console.log('[registry-scan] scanning...')
+    try {
+      const registryUrls = await runRegistryScan()
+      for (const url of registryUrls) probeList.add(url)
+      console.log(`[registry-scan] probe list now has ${probeList.size} URLs`)
+    } catch (err) {
+      console.error('[registry-scan] failed:', err)
+    }
   }, config.scanIntervalMs)
 
   // --- Channel 3: Nostr aggregation ---
