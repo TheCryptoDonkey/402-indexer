@@ -61,6 +61,17 @@ export interface DiscoveredService {
   capabilities?: unknown[]
 }
 
+/** How a 402 service was detected during probing */
+export type DetectionMethod =
+  | 'status-402'
+  | 'cors-headers'
+  | 'well-known-l402'
+  | 'well-known-x402'
+  | 'payment-headers'
+  | 'html-meta'
+  | 'link-header'
+  | 'api-path-probe'
+
 /** Result of an HTTP probe against a URL */
 export interface ProbeResult {
   url: string
@@ -74,6 +85,8 @@ export interface ProbeResult {
   statusCode: number
   /** Error message if probe failed */
   error?: string
+  /** Which signal triggered detection (when is402 is true) */
+  detectionMethod?: DetectionMethod
 }
 
 /** Health state for a single indexed service, persisted to JSON */

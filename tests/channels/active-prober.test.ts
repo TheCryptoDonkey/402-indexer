@@ -1,16 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { probeUrl, probeService, probeWellKnownX402, parseL402Challenge, parseX402Challenge } from '../../src/channels/active-prober.js'
+import {
+  probeUrl,
+  probeService,
+  probeUrls,
+  probeWellKnownX402,
+  checkResponseSignals,
+  parseL402Challenge,
+  parseX402Challenge,
+} from '../../src/channels/active-prober.js'
 
 // Mock global fetch
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
 function mockResponse(status: number, headers: Record<string, string>, body = ''): Response {
+  let bodyConsumed = false
   return {
     status,
     headers: new Headers(headers),
-    text: () => Promise.resolve(body),
-    json: () => Promise.resolve(body ? JSON.parse(body) : {}),
+    text: () => {
+      bodyConsumed = true
+      return Promise.resolve(body)
+    },
+    json: () => {
+      bodyConsumed = true
+      return Promise.resolve(body ? JSON.parse(body) : {})
+    },
     ok: status >= 200 && status < 300,
   } as Response
 }
@@ -56,6 +71,107 @@ describe('parseX402Challenge', () => {
   })
 })
 
+describe('checkResponseSignals', () => {
+  it('detects via 402 status code', async () => {
+    const resp = mockResponse(402, {
+      'www-authenticate': 'L402 macaroon="abc", invoice="lnbc1p"',
+    })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.is402).toBe(true)
+    expect(result!.detectionMethod).toBe('status-402')
+    expect(result!.paymentMethods[0].rail).toBe('l402')
+  })
+
+  it('detects via CORS expose headers', async () => {
+    const resp = mockResponse(200, {
+      'access-control-expose-headers': 'WWW-Authenticate, PAYMENT-REQUIRED',
+    })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.is402).toBe(true)
+    expect(result!.detectionMethod).toBe('cors-headers')
+  })
+
+  it('detects via X-Payment-Methods header', async () => {
+    const resp = mockResponse(200, { 'x-payment-methods': 'lightning' })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.detectionMethod).toBe('payment-headers')
+  })
+
+  it('detects via X-Pricing header', async () => {
+    const resp = mockResponse(200, { 'x-pricing': '100 sats' })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.detectionMethod).toBe('payment-headers')
+  })
+
+  it('detects via Accept-Payment header', async () => {
+    const resp = mockResponse(200, { 'accept-payment': 'lightning' })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.detectionMethod).toBe('payment-headers')
+  })
+
+  it('detects via Link header pointing to payment manifest', async () => {
+    const resp = mockResponse(200, {
+      'link': '</.well-known/x402.json>; rel="payment"',
+    })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.detectionMethod).toBe('link-header')
+  })
+
+  it('detects via HTML meta tags', async () => {
+    const html = '<html><head><meta name="x402" content="enabled"></head><body></body></html>'
+    const resp = mockResponse(200, { 'content-type': 'text/html' }, html)
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.detectionMethod).toBe('html-meta')
+  })
+
+  it('detects l402 meta tag in HTML', async () => {
+    const html = '<html><head><meta name="l402" content="lightning"></head></html>'
+    const resp = mockResponse(200, { 'content-type': 'text/html' }, html)
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.detectionMethod).toBe('html-meta')
+  })
+
+  it('detects payment meta tag in HTML', async () => {
+    const html = '<html><head><meta name="payment" content="l402"></head></html>'
+    const resp = mockResponse(200, { 'content-type': 'text/html' }, html)
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.detectionMethod).toBe('html-meta')
+  })
+
+  it('returns null when no signals found', async () => {
+    const resp = mockResponse(200, {})
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).toBeNull()
+  })
+
+  it('detects X-Payment in CORS expose headers', async () => {
+    const resp = mockResponse(200, {
+      'access-control-expose-headers': 'X-Payment',
+    })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.detectionMethod).toBe('cors-headers')
+  })
+
+  it('detects 402 status even without parseable headers', async () => {
+    const resp = mockResponse(402, {})
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.is402).toBe(true)
+    expect(result!.detectionMethod).toBe('status-402')
+    expect(result!.paymentMethods[0].rail).toBe('l402')
+  })
+})
+
 describe('probeUrl', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -71,6 +187,7 @@ describe('probeUrl', () => {
     const result = await probeUrl('https://api.example.com/test')
     expect(result.is402).toBe(true)
     expect(result.paymentMethods[0].rail).toBe('l402')
+    expect(result.detectionMethod).toBe('status-402')
   })
 
   it('detects x402 service from 402 response', async () => {
@@ -87,6 +204,7 @@ describe('probeUrl', () => {
     const result = await probeUrl('https://x402.example.com/test')
     expect(result.is402).toBe(true)
     expect(result.paymentMethods[0].rail).toBe('x402')
+    expect(result.detectionMethod).toBe('status-402')
   })
 
   it('detects multi-rail service (L402 + x402)', async () => {
@@ -106,12 +224,26 @@ describe('probeUrl', () => {
     const result = await probeUrl('https://multi.example.com')
     expect(result.is402).toBe(true)
     expect(result.paymentMethods).toHaveLength(2)
+    expect(result.detectionMethod).toBe('status-402')
+  })
+
+  it('detects service via CORS headers on 200 response', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        'access-control-expose-headers': 'WWW-Authenticate, PAYMENT-REQUIRED',
+      }),
+    )
+
+    const result = await probeUrl('https://freemium.example.com')
+    expect(result.is402).toBe(true)
+    expect(result.detectionMethod).toBe('cors-headers')
   })
 
   it('returns is402 false for non-402 responses', async () => {
     mockFetch.mockResolvedValue(mockResponse(200, {}))
     const result = await probeUrl('https://free.example.com')
     expect(result.is402).toBe(false)
+    expect(result.detectionMethod).toBeUndefined()
   })
 
   it('handles network errors', async () => {
@@ -161,6 +293,7 @@ describe('probeWellKnownX402', () => {
     expect(result!.paymentMethods[0].rail).toBe('x402')
     expect(result!.paymentMethods[0].params).toEqual(['base', 'usdc', '0xabc123'])
     expect(result!.pricing[0].amount).toBe(0.01)
+    expect(result!.detectionMethod).toBe('well-known-x402')
   })
 
   it('returns null when manifest does not exist', async () => {
@@ -193,9 +326,10 @@ describe('probeService', () => {
     const result = await probeService('https://api.example.com/endpoint')
     expect(result.is402).toBe(true)
     expect(result.paymentMethods[0].rail).toBe('l402')
+    expect(result.detectionMethod).toBe('status-402')
   })
 
-  it('falls back to .well-known/x402.json when direct probe returns non-402', async () => {
+  it('falls back to .well-known manifests when direct probe returns non-402', async () => {
     mockFetch
       .mockResolvedValueOnce(mockResponse(200, {})) // direct probe returns 200
       .mockResolvedValueOnce(mockResponse(404, {})) // .well-known/l402 returns 404
@@ -214,6 +348,7 @@ describe('probeService', () => {
     const result = await probeService('https://api.example.com/')
     expect(result.is402).toBe(true)
     expect(result.paymentMethods[0].rail).toBe('x402')
+    expect(result.detectionMethod).toBe('well-known-x402')
   })
 
   it('tries common API paths for bare domains', async () => {
@@ -229,5 +364,70 @@ describe('probeService', () => {
 
     const result = await probeService('https://api.example.com/')
     expect(result.is402).toBe(true)
+    expect(result.detectionMethod).toBe('api-path-probe')
+  })
+})
+
+describe('probeUrls', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('probes URLs in parallel batches', async () => {
+    const urls = Array.from({ length: 5 }, (_, i) => `https://example${i}.com`)
+
+    // Use URL-based mock to avoid ordering issues with parallel probing
+    mockFetch.mockImplementation((url: string) => {
+      const urlStr = String(url)
+      // example2.com returns 402
+      if (urlStr.startsWith('https://example2.com') && !urlStr.includes('.well-known')) {
+        return Promise.resolve(
+          mockResponse(402, { 'www-authenticate': 'L402 macaroon="a", invoice="lnbc1p"' }),
+        )
+      }
+      // .well-known paths return 404
+      if (urlStr.includes('.well-known')) {
+        return Promise.resolve(mockResponse(404, {}))
+      }
+      // Everything else returns 200
+      return Promise.resolve(mockResponse(200, {}))
+    })
+
+    const results = await probeUrls(urls, undefined, 5, 0)
+    expect(results).toHaveLength(5)
+    const found = results.filter(r => r.is402)
+    expect(found.length).toBeGreaterThanOrEqual(1)
+    // The example2.com hit should be detected via 402 status
+    const example2 = results.find(r => r.url.includes('example2'))
+    expect(example2).toBeDefined()
+    expect(example2!.is402).toBe(true)
+    expect(example2!.detectionMethod).toBe('status-402')
+  })
+
+  it('handles fetch errors gracefully', async () => {
+    const urls = ['https://crash.example.com']
+    // probeService catches errors in probeUrl, so this still produces a result
+    mockFetch.mockRejectedValue(new Error('DNS_FAILED'))
+
+    const results = await probeUrls(urls, undefined, 20, 0)
+    expect(results).toHaveLength(1)
+    expect(results[0].is402).toBe(false)
+    // Error is captured in probeUrl's catch, not in the outer Promise.allSettled
+    expect(results[0].error).toBeDefined()
+  })
+
+  it('respects concurrency parameter', async () => {
+    const urls = Array.from({ length: 6 }, (_, i) => `https://test${i}.com`)
+
+    mockFetch.mockImplementation((url: string) => {
+      const urlStr = String(url)
+      if (urlStr.includes('.well-known')) {
+        return Promise.resolve(mockResponse(404, {}))
+      }
+      return Promise.resolve(mockResponse(200, {}))
+    })
+
+    const results = await probeUrls(urls, undefined, 2, 0)
+    expect(results).toHaveLength(6)
   })
 })

@@ -118,7 +118,7 @@ async function main(): Promise<void> {
 
       const event = buildServiceEvent(config.secretKey, service)
       const pubResult = await publishEvent(event, config.publishRelays)
-      console.log(`[active-prober] published ${identifier}: ${pubResult.accepted} accepted, ${pubResult.failed} failed`)
+      console.log(`[active-prober] published ${identifier} (${result.detectionMethod ?? 'unknown'}): ${pubResult.accepted} accepted, ${pubResult.failed} failed`)
 
       indexedServices.set(identifier, service)
       indexerEventIds.set(identifier, event.id)

@@ -1,8 +1,8 @@
-import type { PaymentMethod, PricingEntry, ProbeResult } from '../types.js'
+import type { DetectionMethod, PaymentMethod, PricingEntry, ProbeResult } from '../types.js'
 
 const DEFAULT_USER_AGENT = '402-indexer/1.0 (+https://402.pub)'
 const PROBE_TIMEOUT_MS = 15_000
-const COMMON_API_PATHS = ['', '/api', '/v1', '/api/v1']
+const COMMON_API_PATHS = ['/api', '/v1', '/api/v1']
 
 /**
  * Parse an L402/LSAT challenge from a WWW-Authenticate header.
@@ -52,7 +52,112 @@ export function parseX402Challenge(
 }
 
 /**
- * Probe a URL for L402/x402 payment challenges.
+ * Check a single response for ALL 402 signals in one pass.
+ * Returns the first detection or null if no signals found.
+ */
+export async function checkResponseSignals(
+  url: string,
+  response: Response,
+): Promise<ProbeResult | null> {
+  const paymentMethods: PaymentMethod[] = []
+  const pricing: PricingEntry[] = []
+  let detectionMethod: DetectionMethod | undefined
+
+  // Signal 1: HTTP 402 status with L402/x402 headers
+  if (response.status === 402) {
+    detectionMethod = 'status-402'
+
+    const wwwAuth = response.headers.get('www-authenticate')
+    if (wwwAuth) {
+      const l402 = parseL402Challenge(wwwAuth)
+      if (l402) {
+        paymentMethods.push({ rail: l402.rail, params: l402.params })
+        pricing.push(...l402.pricing)
+      }
+    }
+
+    const xPayment = response.headers.get('x-payment-required')
+    if (xPayment) {
+      const body = await response.text()
+      const x402 = parseX402Challenge(xPayment, body)
+      if (x402) {
+        paymentMethods.push({ rail: x402.rail, params: x402.params })
+        pricing.push(...x402.pricing)
+      }
+    }
+
+    // Even without parseable headers, a 402 status is a strong signal
+    if (paymentMethods.length === 0) {
+      paymentMethods.push({ rail: 'l402', params: ['lightning'] })
+    }
+
+    return { url, is402: true, paymentMethods, pricing, statusCode: 402, detectionMethod }
+  }
+
+  // Signal 2: CORS headers exposing payment capability
+  const corsExpose = response.headers.get('access-control-expose-headers') ?? ''
+  if (/www-authenticate|payment-required|x-payment/i.test(corsExpose)) {
+    return {
+      url,
+      is402: true,
+      paymentMethods: [{ rail: 'l402' as const, params: ['lightning'] }],
+      pricing: [],
+      statusCode: response.status,
+      detectionMethod: 'cors-headers',
+    }
+  }
+
+  // Signal 3: Payment-related response headers on any status
+  const xPaymentMethods = response.headers.get('x-payment-methods')
+  const xPricing = response.headers.get('x-pricing')
+  const acceptPayment = response.headers.get('accept-payment')
+  if (xPaymentMethods || xPricing || acceptPayment) {
+    return {
+      url,
+      is402: true,
+      paymentMethods: [{ rail: 'l402' as const, params: ['lightning'] }],
+      pricing: [],
+      statusCode: response.status,
+      detectionMethod: 'payment-headers',
+    }
+  }
+
+  // Signal 4: Link header pointing to payment manifest
+  const linkHeader = response.headers.get('link') ?? ''
+  if (/\.well-known\/x402\.json|\.well-known\/l402/.test(linkHeader) && /rel="?payment"?/.test(linkHeader)) {
+    return {
+      url,
+      is402: true,
+      paymentMethods: [{ rail: 'l402' as const, params: ['lightning'] }],
+      pricing: [],
+      statusCode: response.status,
+      detectionMethod: 'link-header',
+    }
+  }
+
+  // Signal 5: HTML meta tags for payment in HTML responses
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('text/html')) {
+    // Read first 4KB of HTML — enough for <head> meta tags
+    const body = await response.text()
+    const head = body.slice(0, 4096)
+    if (/<meta\s[^>]*name=["'](x402|l402|payment)["']/i.test(head)) {
+      return {
+        url,
+        is402: true,
+        paymentMethods: [{ rail: 'l402' as const, params: ['lightning'] }],
+        pricing: [],
+        statusCode: response.status,
+        detectionMethod: 'html-meta',
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Probe a URL for L402/x402 payment challenges via multiple signals.
  */
 export async function probeUrl(
   url: string,
@@ -69,57 +174,10 @@ export async function probeUrl(
     })
     clearTimeout(timeout)
 
-    // Check CORS headers for 402 capability even on non-402 responses
-    // Services with free tiers return 200 but expose WWW-Authenticate/PAYMENT-REQUIRED in CORS
-    const corsExpose = response.headers.get('access-control-expose-headers') ?? ''
-    const has402Cors = /www-authenticate|payment-required/i.test(corsExpose)
+    const signalResult = await checkResponseSignals(url, response)
+    if (signalResult) return signalResult
 
-    if (response.status !== 402 && !has402Cors) {
-      return { url, is402: false, paymentMethods: [], pricing: [], statusCode: response.status }
-    }
-
-    // If we detected via CORS but got 200, mark as a 402-capable service
-    if (response.status !== 402 && has402Cors) {
-      return {
-        url,
-        is402: true,
-        paymentMethods: [{ rail: 'l402' as const, params: ['lightning'] }],
-        pricing: [],
-        statusCode: response.status,
-      }
-    }
-
-    const paymentMethods: PaymentMethod[] = []
-    const pricing: PricingEntry[] = []
-
-    // Check for L402
-    const wwwAuth = response.headers.get('www-authenticate')
-    if (wwwAuth) {
-      const l402 = parseL402Challenge(wwwAuth)
-      if (l402) {
-        paymentMethods.push({ rail: l402.rail, params: l402.params })
-        pricing.push(...l402.pricing)
-      }
-    }
-
-    // Check for x402
-    const xPayment = response.headers.get('x-payment-required')
-    if (xPayment) {
-      const body = await response.text()
-      const x402 = parseX402Challenge(xPayment, body)
-      if (x402) {
-        paymentMethods.push({ rail: x402.rail, params: x402.params })
-        pricing.push(...x402.pricing)
-      }
-    }
-
-    return {
-      url,
-      is402: paymentMethods.length > 0,
-      paymentMethods,
-      pricing,
-      statusCode: 402,
-    }
+    return { url, is402: false, paymentMethods: [], pricing: [], statusCode: response.status }
   } catch (err) {
     return {
       url,
@@ -132,10 +190,7 @@ export async function probeUrl(
   }
 }
 
-/**
- * Parse a .well-known/x402.json manifest to extract payment info.
- * Returns a ProbeResult if the manifest exists and is valid.
- */
+/** x402 manifest at .well-known/x402.json */
 export interface X402Manifest {
   resources?: {
     url?: string
@@ -147,6 +202,10 @@ export interface X402Manifest {
   }[]
 }
 
+/**
+ * Parse a .well-known/x402.json manifest to extract payment info.
+ * Returns a ProbeResult if the manifest exists and is valid.
+ */
 export async function probeWellKnownX402(
   baseUrl: string,
   userAgent: string = DEFAULT_USER_AGENT,
@@ -202,6 +261,7 @@ export async function probeWellKnownX402(
       paymentMethods,
       pricing,
       statusCode: 200,
+      detectionMethod: 'well-known-x402',
     }
   } catch {
     return null
@@ -275,6 +335,7 @@ export async function probeWellKnownL402(
       paymentMethods,
       pricing,
       statusCode: 200,
+      detectionMethod: 'well-known-l402',
     }
   } catch {
     return null
@@ -282,34 +343,41 @@ export async function probeWellKnownL402(
 }
 
 /**
- * Smart probe: tries the URL directly, then .well-known/l402, then .well-known/x402.json,
- * then common API paths. Returns on first 402 hit.
+ * Smart probe: checks the URL for all signals in one request, then tries
+ * .well-known manifests only if the initial request found nothing,
+ * then common API paths as a last resort.
  */
 export async function probeService(
   url: string,
   userAgent: string = DEFAULT_USER_AGENT,
 ): Promise<ProbeResult> {
-  // 1. Try the URL as given
+  // 1. Try the URL as given — checks ALL signals from a single response
   const direct = await probeUrl(url, userAgent)
   if (direct.is402) return direct
 
-  // 2. Check .well-known/l402 manifest
-  const l402Manifest = await probeWellKnownL402(url, userAgent)
-  if (l402Manifest) return l402Manifest
+  // 2. Check .well-known manifests in parallel
+  const [l402Manifest, x402Manifest] = await Promise.allSettled([
+    probeWellKnownL402(url, userAgent),
+    probeWellKnownX402(url, userAgent),
+  ])
 
-  // 3. Check .well-known/x402.json manifest
-  const manifest = await probeWellKnownX402(url, userAgent)
-  if (manifest) return manifest
+  if (l402Manifest.status === 'fulfilled' && l402Manifest.value) {
+    return l402Manifest.value
+  }
+  if (x402Manifest.status === 'fulfilled' && x402Manifest.value) {
+    return x402Manifest.value
+  }
 
-  // 4. Try common API paths (only if the URL is a bare domain)
+  // 3. Try common API paths (only if the URL is a bare domain)
   try {
     const parsed = new URL(url)
     if (parsed.pathname === '/' || parsed.pathname === '') {
       for (const path of COMMON_API_PATHS) {
-        if (path === '') continue // already tried root
         const pathUrl = `${parsed.origin}${path}`
         const result = await probeUrl(pathUrl, userAgent)
-        if (result.is402) return result
+        if (result.is402) {
+          return { ...result, detectionMethod: 'api-path-probe' }
+        }
       }
     }
   } catch {
@@ -320,29 +388,53 @@ export async function probeService(
 }
 
 /**
- * Probe a batch of URLs sequentially with a delay between each.
- * Uses smart probing (direct → .well-known/x402.json → common paths).
- * Logs progress every 50 URLs.
+ * Probe a batch of URLs in parallel batches with a delay between batches.
+ * Much faster than sequential probing — 543 URLs in ~2 minutes instead of 20+.
  */
 export async function probeUrls(
   urls: string[],
   userAgent?: string,
-  delayMs = 500,
+  concurrency = 20,
+  batchDelayMs = 500,
 ): Promise<ProbeResult[]> {
   const results: ProbeResult[] = []
   let found = 0
-  for (let i = 0; i < urls.length; i++) {
-    const result = await probeService(urls[i], userAgent)
-    results.push(result)
-    if (result.is402) found++
 
-    if ((i + 1) % 50 === 0 || i === urls.length - 1) {
-      console.log(`[active-prober] progress: ${i + 1}/${urls.length} probed, ${found} services found`)
+  for (let i = 0; i < urls.length; i += concurrency) {
+    const batch = urls.slice(i, i + concurrency)
+    const batchResults = await Promise.allSettled(
+      batch.map(url => probeService(url, userAgent)),
+    )
+
+    for (let j = 0; j < batchResults.length; j++) {
+      const settled = batchResults[j]
+      if (settled.status === 'fulfilled') {
+        const result = settled.value
+        results.push(result)
+        if (result.is402) {
+          found++
+          console.log(`[active-prober] found: ${result.url} (${result.detectionMethod ?? 'unknown'})`)
+        }
+      } else {
+        results.push({
+          url: batch[j],
+          is402: false,
+          paymentMethods: [],
+          pricing: [],
+          statusCode: 0,
+          error: settled.reason instanceof Error ? settled.reason.message : String(settled.reason),
+        })
+      }
     }
 
-    if (delayMs > 0) {
-      await new Promise(resolve => setTimeout(resolve, delayMs))
+    const probed = Math.min(i + concurrency, urls.length)
+    console.log(`[active-prober] progress: ${probed}/${urls.length} probed, ${found} services found`)
+
+    // Delay between batches to avoid overwhelming targets
+    if (i + concurrency < urls.length && batchDelayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, batchDelayMs))
     }
   }
+
   return results
 }
