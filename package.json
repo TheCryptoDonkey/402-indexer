@@ -1,0 +1,34 @@
+{
+  "name": "402-indexer",
+  "version": "0.1.0",
+  "description": "Nostr-native crawler that discovers L402 and x402 paid APIs and publishes kind 31402 events",
+  "type": "module",
+  "main": "dist/orchestrator.js",
+  "bin": {
+    "402-indexer": "dist/orchestrator.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/orchestrator.js",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": ["l402", "x402", "nostr", "402", "lightning", "paid-api"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TheCryptoDonkey/402-indexer"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "nostr-tools": "^2.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "@types/node": "^22.0.0"
+  }
+}

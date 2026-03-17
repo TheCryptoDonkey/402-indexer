@@ -1,0 +1,20 @@
+{
+  "subscribe": [
+    "wss://relay.trotters.cc",
+    "wss://relay.damus.io",
+    "wss://relay.primal.net",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+    "wss://purplepag.es",
+    "wss://relay.snort.social",
+    "wss://nostr.wine",
+    "wss://relay.nostr.net",
+    "wss://nostr-pub.wellorder.net"
+  ],
+  "publish": [
+    "wss://relay.trotters.cc",
+    "wss://relay.damus.io",
+    "wss://relay.primal.net",
+    "wss://nos.lol"
+  ]
+}
