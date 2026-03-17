@@ -69,8 +69,24 @@ export async function probeUrl(
     })
     clearTimeout(timeout)
 
-    if (response.status !== 402) {
+    // Check CORS headers for 402 capability even on non-402 responses
+    // Services with free tiers return 200 but expose WWW-Authenticate/PAYMENT-REQUIRED in CORS
+    const corsExpose = response.headers.get('access-control-expose-headers') ?? ''
+    const has402Cors = /www-authenticate|payment-required/i.test(corsExpose)
+
+    if (response.status !== 402 && !has402Cors) {
       return { url, is402: false, paymentMethods: [], pricing: [], statusCode: response.status }
+    }
+
+    // If we detected via CORS but got 200, mark as a 402-capable service
+    if (response.status !== 402 && has402Cors) {
+      return {
+        url,
+        is402: true,
+        paymentMethods: [{ rail: 'l402' as const, params: ['lightning'] }],
+        pricing: [],
+        statusCode: response.status,
+      }
     }
 
     const paymentMethods: PaymentMethod[] = []
