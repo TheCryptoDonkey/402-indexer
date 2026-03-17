@@ -229,6 +229,7 @@ export async function probeService(
 /**
  * Probe a batch of URLs sequentially with a delay between each.
  * Uses smart probing (direct → .well-known/x402.json → common paths).
+ * Logs progress every 50 URLs.
  */
 export async function probeUrls(
   urls: string[],
@@ -236,8 +237,16 @@ export async function probeUrls(
   delayMs = 500,
 ): Promise<ProbeResult[]> {
   const results: ProbeResult[] = []
-  for (const url of urls) {
-    results.push(await probeService(url, userAgent))
+  let found = 0
+  for (let i = 0; i < urls.length; i++) {
+    const result = await probeService(urls[i], userAgent)
+    results.push(result)
+    if (result.is402) found++
+
+    if ((i + 1) % 50 === 0 || i === urls.length - 1) {
+      console.log(`[active-prober] progress: ${i + 1}/${urls.length} probed, ${found} services found`)
+    }
+
     if (delayMs > 0) {
       await new Promise(resolve => setTimeout(resolve, delayMs))
     }
