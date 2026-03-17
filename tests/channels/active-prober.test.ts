@@ -198,6 +198,7 @@ describe('probeService', () => {
   it('falls back to .well-known/x402.json when direct probe returns non-402', async () => {
     mockFetch
       .mockResolvedValueOnce(mockResponse(200, {})) // direct probe returns 200
+      .mockResolvedValueOnce(mockResponse(404, {})) // .well-known/l402 returns 404
       .mockResolvedValueOnce( // .well-known/x402.json returns manifest
         mockResponse(200, {}, JSON.stringify({
           resources: [{
@@ -218,7 +219,8 @@ describe('probeService', () => {
   it('tries common API paths for bare domains', async () => {
     mockFetch
       .mockResolvedValueOnce(mockResponse(200, {})) // root returns 200
-      .mockResolvedValueOnce(mockResponse(404, {})) // .well-known returns 404
+      .mockResolvedValueOnce(mockResponse(404, {})) // .well-known/l402 returns 404
+      .mockResolvedValueOnce(mockResponse(404, {})) // .well-known/x402.json returns 404
       .mockResolvedValueOnce( // /api returns 402
         mockResponse(402, {
           'www-authenticate': 'L402 macaroon="abc", invoice="lnbc1p"',
