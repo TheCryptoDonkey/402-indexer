@@ -1,5 +1,7 @@
 # 402-indexer
 
+**Nostr:** [`npub1mgvlrnf5hm9yf0n5mf9nqmvarhvxkc6remu5ec3vf8r0txqkuk7su0e7q2`](https://njump.me/npub1mgvlrnf5hm9yf0n5mf9nqmvarhvxkc6remu5ec3vf8r0txqkuk7su0e7q2)
+
 Nostr-native crawler that discovers L402 and x402 paid APIs and publishes [kind 31402](https://github.com/forgesworn/402-announce) events for decentralised service discovery.
 
 ## What it does
