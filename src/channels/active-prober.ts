@@ -6,11 +6,12 @@ const COMMON_API_PATHS = ['/api', '/v1', '/api/v1']
 
 /**
  * Parse an L402/LSAT challenge from a WWW-Authenticate header.
+ * Supports multi-scheme headers (RFC 7235) where L402/LSAT may not be first.
  */
 export function parseL402Challenge(
   header: string,
 ): { rail: 'l402'; params: string[]; pricing: PricingEntry[] } | null {
-  const match = header.match(/^(L402|LSAT)\s+/i)
+  const match = header.match(/(?:^|,\s*)(L402|LSAT)\s+/i)
   if (!match) return null
 
   // Extract invoice to try to determine price (best-effort)
@@ -19,6 +20,44 @@ export function parseL402Challenge(
     rail: 'l402',
     params: ['lightning'],
     pricing: [],
+  }
+}
+
+/**
+ * Parse an IETF Payment challenge from a WWW-Authenticate header.
+ * Detects the HTTP Authentication Payment scheme (draft-ryan-httpauth-payment).
+ * Supports multi-scheme headers where Payment may appear alongside L402.
+ */
+export function parsePaymentChallenge(
+  header: string,
+): { rail: 'payment'; params: string[]; pricing: PricingEntry[] } | null {
+  // Match 'Payment' as an auth scheme — may appear after other schemes in the header
+  const match = header.match(/(?:^|,\s*)Payment\s+/i)
+  if (!match) return null
+
+  // Extract intent_type — determines the underlying payment rail
+  const intentMatch = header.match(/intent_type="([^"]+)"/i)
+  const intentType = intentMatch?.[1] ?? 'lightning'
+
+  // Extract pricing from challenge parameters (best-effort)
+  const pricing: PricingEntry[] = []
+  const amountMatch = header.match(/amount="([^"]+)"/i)
+  const currencyMatch = header.match(/currency="([^"]+)"/i)
+  if (amountMatch) {
+    const amount = parseFloat(amountMatch[1])
+    if (Number.isFinite(amount) && amount > 0) {
+      pricing.push({
+        capability: 'default',
+        amount,
+        currency: currencyMatch?.[1]?.toLowerCase() ?? 'sats',
+      })
+    }
+  }
+
+  return {
+    rail: 'payment',
+    params: [intentType],
+    pricing,
   }
 }
 
@@ -69,10 +108,19 @@ export async function checkResponseSignals(
 
     const wwwAuth = response.headers.get('www-authenticate')
     if (wwwAuth) {
+      // Check for L402/LSAT scheme
       const l402 = parseL402Challenge(wwwAuth)
       if (l402) {
         paymentMethods.push({ rail: l402.rail, params: l402.params })
         pricing.push(...l402.pricing)
+      }
+
+      // Check for IETF Payment scheme (draft-ryan-httpauth-payment)
+      const payment = parsePaymentChallenge(wwwAuth)
+      if (payment) {
+        paymentMethods.push({ rail: payment.rail, params: payment.params })
+        pricing.push(...payment.pricing)
+        detectionMethod = 'ietf-payment'
       }
     }
 

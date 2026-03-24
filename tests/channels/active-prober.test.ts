@@ -7,6 +7,7 @@ import {
   checkResponseSignals,
   parseL402Challenge,
   parseX402Challenge,
+  parsePaymentChallenge,
 } from '../../src/channels/active-prober.js'
 
 // Mock global fetch
@@ -47,6 +48,71 @@ describe('parseL402Challenge', () => {
     expect(parseL402Challenge('Basic realm="api"')).toBeNull()
     expect(parseL402Challenge('Bearer')).toBeNull()
   })
+
+  it('detects L402 in multi-scheme header where Payment comes first', () => {
+    const header = 'Payment scheme="hmac-sha256", intent_type="lightning", L402 macaroon="abc", invoice="lnbc1p"'
+    const result = parseL402Challenge(header)
+    expect(result).not.toBeNull()
+    expect(result!.rail).toBe('l402')
+  })
+})
+
+describe('parsePaymentChallenge', () => {
+  it('detects IETF Payment from WWW-Authenticate header', () => {
+    const header = 'Payment scheme="hmac-sha256", intent_type="lightning", amount="100", currency="SAT"'
+    const result = parsePaymentChallenge(header)
+    expect(result).not.toBeNull()
+    expect(result!.rail).toBe('payment')
+    expect(result!.params).toEqual(['lightning'])
+    expect(result!.pricing).toEqual([{ capability: 'default', amount: 100, currency: 'sat' }])
+  })
+
+  it('extracts cashu intent type', () => {
+    const header = 'Payment scheme="hmac-sha256", intent_type="cashu", amount="50", currency="SAT"'
+    const result = parsePaymentChallenge(header)
+    expect(result).not.toBeNull()
+    expect(result!.params).toEqual(['cashu'])
+  })
+
+  it('extracts session intent type', () => {
+    const header = 'Payment scheme="hmac-sha256", intent_type="session", amount="1000", currency="SAT"'
+    const result = parsePaymentChallenge(header)
+    expect(result).not.toBeNull()
+    expect(result!.params).toEqual(['session'])
+  })
+
+  it('defaults to lightning when intent_type is absent', () => {
+    const header = 'Payment scheme="hmac-sha256", amount="100", currency="SAT"'
+    const result = parsePaymentChallenge(header)
+    expect(result).not.toBeNull()
+    expect(result!.params).toEqual(['lightning'])
+  })
+
+  it('handles pricing without currency (defaults to sats)', () => {
+    const header = 'Payment scheme="hmac-sha256", intent_type="lightning", amount="50"'
+    const result = parsePaymentChallenge(header)
+    expect(result!.pricing).toEqual([{ capability: 'default', amount: 50, currency: 'sats' }])
+  })
+
+  it('skips pricing when amount is missing', () => {
+    const header = 'Payment scheme="hmac-sha256", intent_type="lightning"'
+    const result = parsePaymentChallenge(header)
+    expect(result).not.toBeNull()
+    expect(result!.pricing).toEqual([])
+  })
+
+  it('detects Payment in multi-scheme header after L402', () => {
+    const header = 'L402 macaroon="abc", invoice="lnbc1p", Payment scheme="hmac-sha256", intent_type="lightning"'
+    const result = parsePaymentChallenge(header)
+    expect(result).not.toBeNull()
+    expect(result!.rail).toBe('payment')
+  })
+
+  it('returns null for non-Payment headers', () => {
+    expect(parsePaymentChallenge('Basic realm="api"')).toBeNull()
+    expect(parsePaymentChallenge('L402 macaroon="abc"')).toBeNull()
+    expect(parsePaymentChallenge('Bearer token="xyz"')).toBeNull()
+  })
 })
 
 describe('parseX402Challenge', () => {
@@ -81,6 +147,33 @@ describe('checkResponseSignals', () => {
     expect(result!.is402).toBe(true)
     expect(result!.detectionMethod).toBe('status-402')
     expect(result!.paymentMethods[0].rail).toBe('l402')
+  })
+
+  it('detects IETF Payment-only endpoint', async () => {
+    const resp = mockResponse(402, {
+      'www-authenticate': 'Payment scheme="hmac-sha256", intent_type="lightning", amount="100", currency="SAT"',
+    })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.is402).toBe(true)
+    expect(result!.detectionMethod).toBe('ietf-payment')
+    expect(result!.paymentMethods).toHaveLength(1)
+    expect(result!.paymentMethods[0].rail).toBe('payment')
+    expect(result!.paymentMethods[0].params).toEqual(['lightning'])
+    expect(result!.pricing[0]).toEqual({ capability: 'default', amount: 100, currency: 'sat' })
+  })
+
+  it('detects dual-scheme endpoint (L402 + IETF Payment)', async () => {
+    const resp = mockResponse(402, {
+      'www-authenticate': 'L402 macaroon="abc", invoice="lnbc1p", Payment scheme="hmac-sha256", intent_type="lightning"',
+    })
+    const result = await checkResponseSignals('https://api.example.com', resp)
+    expect(result).not.toBeNull()
+    expect(result!.is402).toBe(true)
+    expect(result!.detectionMethod).toBe('ietf-payment')
+    expect(result!.paymentMethods).toHaveLength(2)
+    expect(result!.paymentMethods[0].rail).toBe('l402')
+    expect(result!.paymentMethods[1].rail).toBe('payment')
   })
 
   it('detects via CORS expose headers', async () => {

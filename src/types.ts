@@ -17,7 +17,7 @@ export function isValidStatus(s: string): s is ServiceStatus {
 }
 
 /** Payment method identifier — matches tag[1] of a pmi tag */
-export type PaymentRail = 'l402' | 'x402' | 'cashu' | 'xcashu'
+export type PaymentRail = 'l402' | 'x402' | 'cashu' | 'xcashu' | 'payment'
 
 /** A structured payment method from a pmi tag */
 export interface PaymentMethod {
@@ -64,6 +64,7 @@ export interface DiscoveredService {
 /** How a 402 service was detected during probing */
 export type DetectionMethod =
   | 'status-402'
+  | 'ietf-payment'
   | 'cors-headers'
   | 'well-known-l402'
   | 'well-known-x402'
