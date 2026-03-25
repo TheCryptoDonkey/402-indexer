@@ -7,12 +7,7 @@
   "bin": {
     "402-indexer": "dist/orchestrator.js"
   },
-  "files": [
-    "dist/",
-    "config/",
-    "LICENCE",
-    "llms.txt"
-  ],
+  "private": true,
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -46,10 +41,7 @@
     "nostr-tools": "^2.12.0"
   },
   "devDependencies": {
-    "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/git": "^10.0.1",
     "@types/node": "^22.0.0",
-    "semantic-release": "^24.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },
