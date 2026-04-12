@@ -8,6 +8,12 @@
     "402-indexer": "dist/orchestrator.js"
   },
   "private": true,
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "provenance": true
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
