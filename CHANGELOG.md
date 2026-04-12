@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2 (2026-04-12)
+
+### Bug Fixes
+
+- bump vite to 7.3.2 (GHSA-v2wj-q39q-566r, GHSA-p9ff-h696-f583, GHSA-4w7w-66w2-5vf9) (deps)
+
+
+
 ## 0.2.1 (2026-04-12)
 
 ### Bug Fixes
